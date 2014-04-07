@@ -6634,6 +6634,22 @@ Type \\[magit-reset-head] to reset HEAD to the commit at point.
   :group 'magit-log
   (magit-set-buffer-margin magit-log-show-margin))
 
+(defvar magit-log-pretty-graph t)
+
+(defun magit-log-pretty-graph (commit parents)
+  ;; Your stuff here:
+  ;;
+  ;; Usage examples:
+  (list 2  1  3 "|\\" "| |" "| *" "| |" "|/")
+  ;; (list 2 -1 -3 "|\\" "| |" "| *" "| |" "|/")
+  ;; (list 2 -1  3 "|\\" "| |" "| *" "| |" "|/")
+  ;; (list 2  1 -3 "|\\" "| |" "| *" "| |" "|/")
+  ;; (list 0  0  1             "| *" "| ↓" "| ↳")
+  ;; (list 0  0 -1             "| *" "| ↓" "| ↳")
+  ;; (list 2  1  0 "| ↱" "| ↑" "| *")
+  ;; (list 2 -1  0 "| ↱" "| ↑" "| *")
+  )
+
 (defun magit-refresh-log-buffer (style range args &optional file)
   (when (consp range)
     (setq range (concat (car range) ".." (cdr range))))
@@ -6655,6 +6671,10 @@ Type \\[magit-reset-head] to reset HEAD to the commit at point.
     "log" (format "-%d" magit-log-cutoff-length) "--color"
     (format "--pretty=format:%%h%s %s[%%an][%%at]%%s"
             (if (member "--decorate=full" args) "%d" "")
+            (if (and (member "--graph" args)
+                     magit-log-pretty-graph)
+                (progn (setq args (delete "--graph" args)) "[%P]")
+              "")
             (if (member "--show-signature" args) "%G?" ""))
     (delete "--show-signature" args)
     range "--" file))
@@ -6675,6 +6695,7 @@ Type \\[magit-reset-head] to reset HEAD to the commit at point.
           "\\(?:"
           "\\(?1:[0-9a-fA-F]+\\) "                 ; sha1
           "\\(?:\\(?3:([^()]+)\\) \\)?"            ; refs
+          "\\(?:\\[\\(?12:[^]]*\\)\\]\\)?"         ; parents
           "\\(?7:[BGUN]\\)?"                       ; gpg
           "\\[\\(?5:[^]]*\\)\\]"                   ; author
           "\\[\\(?6:[^]]*\\)\\]"                   ; date
@@ -6767,8 +6788,31 @@ Type \\[magit-reset-head] to reset HEAD to the commit at point.
                 (bisect-vis magit-log-bisect-vis-re)
                 (bisect-log magit-log-bisect-log-re)))
   (magit-bind-match-strings
-      (hash msg refs graph author date gpg cherry refsel refsub side) nil
+      (hash msg refs graph author date gpg cherry refsel refsub side pgraph) nil
     (magit-delete-match)
+    ;; Okay, that's rather ugly.  We can cleanup
+    ;; once we have agreed on what we need.
+    (let (lgraph agraph rgraph lfill rfill gwidth) ; TODO indent
+    (when pgraph
+      (setq pgraph (magit-log-pretty-graph hash (split-string pgraph))
+            agraph (nth 0 pgraph)
+            lfill  (nth 1 pgraph)
+            rfill  (nth 2 pgraph)
+            pgraph (nthcdr 3 pgraph)
+            gwidth (apply 'max (mapcar 'length pgraph))
+            pgraph (--map (concat it (make-string (- gwidth (length it)) ?\s))
+                          pgraph)
+            lgraph (-take agraph pgraph)
+            rgraph (-drop (1+ agraph) pgraph)
+            agraph (nth agraph pgraph))
+      (when (< lfill 0) (setq lgraph (-remove-at (abs lfill) lgraph)))
+      (when (< rfill 0) (setq rgraph (-remove-at (- (abs rfill)
+                                                    (abs lfill) 2) rgraph)))
+      (dolist (pg lgraph)
+        (save-excursion
+          (insert (make-string (1+ abbrev) ?\s) pg ?\n))
+        (magit-format-log-margin)
+        (forward-line)))
     (when cherry
       (unless (derived-mode-p 'magit-cherry-mode)
         (insert "  "))
@@ -6785,10 +6829,12 @@ Type \\[magit-reset-head] to reset HEAD to the commit at point.
       (if hash
           (insert (propertize hash 'face 'magit-hash) ?\s)
         (insert (make-string (1+ abbrev) ? ))))
-    (when graph
-      (if magit-log-format-graph-function
-          (insert (funcall magit-log-format-graph-function graph))
-        (insert graph)))
+    (cond (graph
+           (if magit-log-format-graph-function
+               (insert (funcall magit-log-format-graph-function graph))
+             (insert graph)))
+          (agraph
+           (insert agraph ?\s)))
     (when (and hash (eq style 'long))
       (magit-insert (if refs hash (magit-rev-parse hash)) 'magit-hash ?\s))
     (when refs
@@ -6818,8 +6864,13 @@ Type \\[magit-reset-head] to reset HEAD to the commit at point.
                (looking-at magit-log-long-re)
                (when (match-string 2)
                  (magit-wash-log-line 'long abbrev))))))
+      (forward-line))
+    (dolist (pg rgraph)
+      (save-excursion
+        (insert (make-string (1+ abbrev) ?\s) pg ?\n))
+      (magit-format-log-margin)
       (forward-line)))
-  t)
+  t))
 
 (defun magit-log-format-unicode-graph (string)
   "Translate ascii characters to unicode characters.
