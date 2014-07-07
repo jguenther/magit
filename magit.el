@@ -4192,6 +4192,9 @@ commit or stash at point, then prompt for a commit."
 
 ;;;;; Commit Washing
 
+;; TODO make it an option
+(defvar magit-commit-insert-gravatars t)
+
 (defun magit-wash-commit (args)
   (looking-at "^commit \\([a-z0-9]+\\)\\(?: \\(.+\\)\\)?$")
   (magit-bind-match-strings (rev refs) nil
@@ -4201,12 +4204,21 @@ commit or stash at point, then prompt for a commit."
         (and refs (concat (magit-format-ref-labels refs) " "))
         (propertize rev 'face 'magit-hash))
       (while (re-search-forward "^\\([a-z]+\\): +\\(.+\\)$" nil t)
-        (magit-bind-match-strings (keyword revs) nil
-          (when (string-match-p keyword "Merge")
+        (magit-bind-match-strings (keyword value) nil
+          (cond
+           ((string-equal keyword "^Merge$")
             (magit-delete-match 2)
-            (dolist (rev (split-string revs))
+            (dolist (rev (split-string value))
               (magit-insert-commit-button rev)
-              (insert ?\s)))))
+              (insert ?\s)))
+           ((and magit-commit-insert-gravatars
+                 (member keyword '("Author" "Commit")))
+            (string-match "<\\([^>]+\\)>" value)
+            (ignore-errors
+              (gravatar-retrieve
+               (match-string 1 value)
+               'magit-insert-gravatar-image
+               (list (copy-marker (line-beginning-position)))))))))
       (forward-line)))
   (forward-line)
   (let ((bound (save-excursion
@@ -4236,6 +4248,25 @@ commit or stash at point, then prompt for a commit."
                         'follow-link t
                         'mouse-face 'magit-section-highlight
                         'face 'magit-hash)))
+
+;; FIXME inserting into an already washed section, messes up its bondaries
+;; FIXME don't assumes magit-commit-extra-options contains "--pretty=fuller"
+;; FIXME calculate ascent, how do we get values to base calculations on?
+(defun magit-insert-gravatar-image (image marker)
+  (unless (eq image 'error)
+    (-when-let (pos (marker-position marker))
+      (with-current-buffer (marker-buffer marker)
+        (save-excursion
+          (let ((inhibit-read-only t))
+            (goto-char pos)
+            (insert "\s" (propertize " " 'display `((,@image :ascent 70)
+                                                   (slice .0 .0 1.0 0.5)))
+                    "\s")
+            (forward-line)
+            (insert "\s" (propertize " " 'display `((,@image :ascent 100)
+                                                   (slice .0 .5 1.0 1.0)))
+                    "\s"))))))
+  (set-marker marker nil))
 
 ;;;; Status Mode
 
@@ -6836,6 +6867,7 @@ alist in `magit-log-format-unicode-graph-alist'."
       'face (get-text-property 0 'face str)))
    string))
 
+;; TODO also insert gravatar images?
 (defun magit-format-log-margin (&optional author date)
   (cl-destructuring-bind (width unit-width duration-spec)
       magit-log-margin-spec
